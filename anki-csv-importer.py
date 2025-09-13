@@ -57,6 +57,9 @@ def csv_to_ac_notes(csv_path, deck_name, note_type):
                     index_to_field_name[j] = field_name
             else:
                 for j, field_value in enumerate(row):
+                    if j not in index_to_field_name:
+                        print(f'[W] Skipping column {j} as it is not in the header')
+                        continue
                     field_name = index_to_field_name[j]
                     if field_name.lower() == 'tags':
                         tags = field_value.split(' ')
@@ -69,7 +72,49 @@ def csv_to_ac_notes(csv_path, deck_name, note_type):
                     'fields': fields,
                     'tags': tags,
                     'options': {
-                        "allowDuplicate": False,
+                        "allowDuplicate": True,
+                        "duplicateScope": "deck"
+                    }
+                }
+                notes.append(note)
+
+    return notes
+
+
+def tsv_to_ac_notes(tsv_path, deck_name, note_type):
+    """
+    Converts a TSV file into a format compatible with AnkiConnect.
+    """
+    notes = []
+    index_to_field_name = {}
+    with open(tsv_path, encoding='utf-8') as tsvfile:
+        reader = csv.reader(tsvfile, delimiter='\t')  # Use tab as a delimiter
+        for i, row in enumerate(reader):
+            fields = {}
+            tags = None
+            if i == 0:
+                # The first row contains headers
+                for j, field_name in enumerate(row):
+                    index_to_field_name[j] = field_name
+            else:
+                # Process data rows
+                for j, field_value in enumerate(row):
+                    if j not in index_to_field_name:
+                        print(f'[W] Skipping column {j} as it is not in the header')
+                        continue
+                    field_name = index_to_field_name[j]
+                    if field_name.lower() == 'tags':
+                        tags = field_value.split(' ') if field_value else []
+                    else:
+                        fields[field_name] = field_value
+
+                note = {
+                    'deckName': deck_name,
+                    'modelName': note_type,
+                    'fields': fields,
+                    'tags': tags,
+                    'options': {
+                        "allowDuplicate": True,
                         "duplicateScope": "deck"
                     }
                 }
@@ -153,17 +198,14 @@ def ac_remove_tags(notes_to_update, note_info_results):
     invoke_multi_ac(remove_tags_actions)
 
 
-def send_to_anki_connect(
-        csv_path,
-        deck_name,
-        note_type):
+def send_to_anki_connect(tsv_path, deck_name, note_type):
     # TODO: Audio, images
-    notes = csv_to_ac_notes(csv_path, deck_name, note_type)
+    notes = tsv_to_ac_notes(tsv_path, deck_name, note_type)
 
-    # Create the deck, if it already exists this will not overwrite it
+    # Create the deck if it does not exist
     invoke_ac('createDeck', deck=deck_name)
 
-    # See which notes can be added
+    # Check which notes can be added
     notes_to_add, notes_to_update = get_ac_add_and_update_note_lists(notes)
 
     print('[+] Adding {} new notes and updating {} existing notes'.format(
@@ -171,7 +213,7 @@ def send_to_anki_connect(
         len(notes_to_update)))
     invoke_ac('addNotes', notes=notes_to_add)
 
-    # Find the IDs of the existing notes
+    # Update existing notes
     find_note_actions = []
     for n in notes_to_update:
         front = n['fields']['Front'].replace('"', '\\"')
@@ -179,11 +221,10 @@ def send_to_anki_connect(
         find_note_actions.append(make_ac_request('findNotes', query=query))
     find_note_results = invoke_multi_ac(find_note_actions)
 
-    # Update notes and get the note info so we can remove old tags
     new_notes_to_update, note_info_results = ac_update_notes_and_get_note_info(
         notes_to_update, find_note_results)
 
-    print('[+] Removing deleted tags from notes')
+    print('[+] Removing outdated tags from notes')
     ac_remove_tags(new_notes_to_update, note_info_results)
 
 
